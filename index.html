@@ -26,6 +26,7 @@ const STORAGE_KEYS = {
   movements: "inv:movements",
   nextId: "inv:nextId",
   sheetsUrl: "inv:sheetsUrl",
+  apiKey: "inv:apiKey",
 };
 
 async function loadData(key, fallback) {
@@ -283,7 +284,8 @@ IMPORTANT:
 Respond with ONLY a raw JSON array. No markdown, no backticks, no explanation. Just [ ... ].
 If no items found, respond with: []`;
 
-async function extractWithAI(file) {
+async function extractWithAI(file, apiKey) {
+  if (!apiKey) throw new Error("Anthropic API key is required. Go to Settings (bottom of sidebar) to add your key.");
   const base64 = await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result.split(",")[1]);
@@ -328,7 +330,12 @@ async function extractWithAI(file) {
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 8192,
@@ -412,6 +419,7 @@ function InventoryApp() {
   const [loaded, setLoaded] = useState(false);
   const [toast, setToast] = useState(null);
   const [sheetsUrl, setSheetsUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [sheetsStatus, setSheetsStatus] = useState(""); // "" | "connected" | "error"
@@ -423,10 +431,12 @@ function InventoryApp() {
       const movs = await loadData(STORAGE_KEYS.movements, null);
       const nid = await loadData(STORAGE_KEYS.nextId, 100);
       const url = await loadData(STORAGE_KEYS.sheetsUrl, "");
+      const key = await loadData(STORAGE_KEYS.apiKey, "");
       setInventory(items || SEED_ITEMS);
       setMovements(movs || SEED_MOVEMENTS);
       setNextId(nid);
       setSheetsUrl(url || "");
+      setApiKey(key || "");
       setLoaded(true);
     })();
   }, []);
@@ -618,7 +628,7 @@ function InventoryApp() {
   const pages = {
     dashboard: <DashboardPage inventory={inventory} movements={movements} lowStockItems={lowStockItems} totalItems={totalItems} setPage={setPage} />,
     inventory: <InventoryPage inventory={inventory} deleteItem={deleteItem} updateItem={updateItem} />,
-    stockin: <StockInPage addItems={addItems} />,
+    stockin: <StockInPage addItems={addItems} apiKey={apiKey} setShowSettings={setShowSettings} />,
     stockout: <StockOutPage inventory={inventory} processStockOut={processStockOut} />,
     history: <HistoryPage movements={movements} />,
   };
@@ -693,50 +703,71 @@ function InventoryApp() {
           {pages[page]}
         </main>
 
-        {/* GOOGLE SHEETS SETTINGS MODAL */}
+        {/* SETTINGS MODAL */}
         {showSettings && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-            <Card style={{ width: 520 }}>
+            <Card style={{ width: 540, maxHeight: "85vh", overflow: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Google Sheets Connection</h3>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Settings</h3>
                 <button onClick={() => setShowSettings(false)} style={{ background: "none", border: "none", color: PALETTE.textMuted, cursor: "pointer" }}><Icons.Close /></button>
               </div>
-              <p style={{ fontSize: 12, color: PALETTE.textMuted, margin: "0 0 16px", lineHeight: 1.6 }}>
-                Paste the Web App URL from your Google Apps Script deployment. This connects your inventory to a Google Sheet for backup and sharing.
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
-                <label style={{ fontSize: 11, fontWeight: 500, color: PALETTE.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Apps Script Web App URL</label>
-                <input
-                  value={sheetsUrl}
-                  onChange={(e) => setSheetsUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/xxxxx/exec"
-                  style={{ background: PALETTE.bg, border: `1px solid ${PALETTE.border}`, borderRadius: 8, padding: "10px 12px", color: PALETTE.text, fontSize: 12, outline: "none", fontFamily: "'JetBrains Mono', monospace", width: "100%" }}
-                />
-              </div>
-              {sheetsStatus === "connected" && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: PALETTE.greenSoft, borderRadius: 8, fontSize: 12, color: PALETTE.green, marginBottom: 16 }}>
-                  <Icons.Check /> Connected to Google Sheets
+
+              {/* API KEY SECTION */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Icons.Sparkle /> AI Extraction (Anthropic API)</div>
+                <p style={{ fontSize: 12, color: PALETTE.textMuted, margin: "0 0 10px", lineHeight: 1.5 }}>
+                  Required for AI-powered document extraction. Get your key from <span style={{ color: PALETTE.accent }}>console.anthropic.com</span>
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: PALETTE.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Anthropic API Key</label>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="sk-ant-api03-..."
+                    style={{ background: PALETTE.bg, border: `1px solid ${PALETTE.border}`, borderRadius: 8, padding: "10px 12px", color: PALETTE.text, fontSize: 12, outline: "none", fontFamily: "'JetBrains Mono', monospace", width: "100%" }}
+                  />
                 </div>
-              )}
-              {sheetsStatus === "error" && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: PALETTE.redSoft, borderRadius: 8, fontSize: 12, color: PALETTE.red, marginBottom: 16 }}>
-                  <Icons.Alert /> Connection failed — check your URL
-                </div>
-              )}
-              <div style={{ fontSize: 11, color: PALETTE.textDim, marginBottom: 16, lineHeight: 1.6, padding: "10px 12px", background: PALETTE.bg, borderRadius: 8 }}>
-                <strong style={{ color: PALETTE.textMuted }}>Setup steps:</strong><br />
-                1. Open Google Sheets → Extensions → Apps Script<br />
-                2. Paste the StockPilot script (provided separately)<br />
-                3. Deploy → New deployment → Web app → Anyone<br />
-                4. Copy the URL and paste it above
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                {sheetsUrl && (
-                  <Btn variant="secondary" onClick={() => saveSheetsUrl("")}>Disconnect</Btn>
+                {apiKey && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: PALETTE.greenSoft, borderRadius: 6, fontSize: 11, color: PALETTE.green, marginTop: 8 }}>
+                    <Icons.Check /> API key saved
+                  </div>
                 )}
+              </div>
+
+              <div style={{ height: 1, background: PALETTE.border, margin: "0 0 20px" }} />
+
+              {/* GOOGLE SHEETS SECTION */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}><Icons.Sync /> Google Sheets Sync</div>
+                <p style={{ fontSize: 12, color: PALETTE.textMuted, margin: "0 0 10px", lineHeight: 1.5 }}>
+                  Connect to a Google Sheet for backup and team sharing.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 10 }}>
+                  <label style={{ fontSize: 11, fontWeight: 500, color: PALETTE.textMuted, textTransform: "uppercase", letterSpacing: "0.04em" }}>Apps Script Web App URL</label>
+                  <input
+                    value={sheetsUrl}
+                    onChange={(e) => setSheetsUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/xxxxx/exec"
+                    style={{ background: PALETTE.bg, border: `1px solid ${PALETTE.border}`, borderRadius: 8, padding: "10px 12px", color: PALETTE.text, fontSize: 12, outline: "none", fontFamily: "'JetBrains Mono', monospace", width: "100%" }}
+                  />
+                </div>
+                {sheetsStatus === "connected" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: PALETTE.greenSoft, borderRadius: 6, fontSize: 11, color: PALETTE.green, marginBottom: 8 }}>
+                    <Icons.Check /> Connected to Google Sheets
+                  </div>
+                )}
+                {sheetsStatus === "error" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: PALETTE.redSoft, borderRadius: 6, fontSize: 11, color: PALETTE.red, marginBottom: 8 }}>
+                    <Icons.Alert /> Connection failed — check your URL
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
                 <Btn variant="secondary" onClick={() => setShowSettings(false)}>Cancel</Btn>
-                <Btn onClick={() => { saveSheetsUrl(sheetsUrl); setShowSettings(false); }}>
-                  <Icons.Check /> {sheetsUrl ? "Save & Test" : "Save"}
+                <Btn onClick={() => { saveData(STORAGE_KEYS.apiKey, apiKey); saveSheetsUrl(sheetsUrl); setShowSettings(false); }}>
+                  <Icons.Check /> Save Settings
                 </Btn>
               </div>
             </Card>
@@ -1182,7 +1213,7 @@ function InventoryPage({ inventory, deleteItem, updateItem }) {
 // ─── STOCK IN PAGE (AI Upload + Manual) ───
 const EMPTY_MANUAL_ITEM = { name: "", sku: "", specs: "", category: "Other", qty: 1, unit: "pcs", supplier: "", dateReceived: new Date().toISOString().split("T")[0], batchNo: "", expiry: "", poNumber: "", location: "", notes: "" };
 
-function StockInPage({ addItems }) {
+function StockInPage({ addItems, apiKey, setShowSettings }) {
   const [mode, setMode] = useState("choose"); // choose | upload | extracting | review | manual | error | done
   const [fileName, setFileName] = useState("");
   const [extracted, setExtracted] = useState([]);
@@ -1192,11 +1223,16 @@ function StockInPage({ addItems }) {
 
   const handleFile = async (file) => {
     if (!file) return;
+    if (!apiKey) {
+      setExtractError("Anthropic API key is required for AI extraction. Click the Settings button at the bottom of the sidebar to add your key.");
+      setMode("error");
+      return;
+    }
     setFileName(file.name);
     setMode("extracting");
     setExtractError("");
     try {
-      const items = await extractWithAI(file);
+      const items = await extractWithAI(file, apiKey);
       if (items.length === 0) {
         setExtractError("AI could not find any extractable items in this document. Try a different file or use manual entry.");
         setMode("error");
